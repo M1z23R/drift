@@ -3,7 +3,7 @@ package middleware
 import (
 	"fmt"
 
-	"github.com/m1z23r/drift"
+	"github.com/m1z23r/drift/pkg/drift"
 )
 
 // SecurityConfig defines the config for security headers middleware

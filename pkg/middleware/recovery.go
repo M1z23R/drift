@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"runtime"
 
-	"github.com/m1z23r/drift"
+	"github.com/m1z23r/drift/pkg/drift"
 )
 
 // RecoveryConfig defines the config for Recovery middleware

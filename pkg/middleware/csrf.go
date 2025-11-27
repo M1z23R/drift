@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"net/http"
 
-	"github.com/m1z23r/drift"
+	"github.com/m1z23r/drift/pkg/drift"
 )
 
 // CSRFConfig defines the config for CSRF middleware

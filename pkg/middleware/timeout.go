@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/m1z23r/drift"
+	"github.com/m1z23r/drift/pkg/drift"
 )
 
 // TimeoutConfig defines the config for timeout middleware

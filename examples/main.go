@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/m1z23r/drift"
-	"github.com/m1z23r/drift/middleware"
+	"github.com/m1z23r/drift/pkg/drift"
+	"github.com/m1z23r/drift/pkg/middleware"
 )
 
 func main() {

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/m1z23r/drift/internal/router"
 )
 
 // Mode represents the environment mode
@@ -19,7 +21,7 @@ const (
 type Engine struct {
 	RouterGroup
 	pool  sync.Pool
-	trees map[string]*node // method -> radix tree
+	trees map[string]*router.Node // method -> radix tree
 	mode  Mode
 }
 
@@ -31,7 +33,7 @@ func New() *Engine {
 			basePath: "/",
 			engine:   nil,
 		},
-		trees: make(map[string]*node),
+		trees: make(map[string]*router.Node),
 		mode:  DebugMode,
 	}
 	engine.RouterGroup.engine = engine
@@ -71,11 +73,16 @@ func (engine *Engine) addRoute(method, path string, handlers []HandlerFunc) {
 
 	root := engine.trees[method]
 	if root == nil {
-		root = &node{}
+		root = router.NewNode()
 		engine.trees[method] = root
 	}
 
-	root.addRoute(path, handlers)
+	// Convert HandlerFunc to router.HandlerFunc (interface{})
+	routerHandlers := make([]router.HandlerFunc, len(handlers))
+	for i, h := range handlers {
+		routerHandlers[i] = h
+	}
+	root.AddRoute(path, routerHandlers)
 
 	// Log route registration in debug mode
 	if engine.IsDebug() {
@@ -119,8 +126,13 @@ func (engine *Engine) handleRequest(c *Context) {
 
 	// Find route
 	if root := engine.trees[httpMethod]; root != nil {
-		handlers, params, fullPath := root.getValue(path)
-		if handlers != nil {
+		routerHandlers, params, fullPath := root.GetValue(path)
+		if routerHandlers != nil {
+			// Convert router.HandlerFunc back to HandlerFunc
+			handlers := make([]HandlerFunc, len(routerHandlers))
+			for i, h := range routerHandlers {
+				handlers[i] = h.(HandlerFunc)
+			}
 			c.handlers = handlers
 			c.Params = params
 			c.Set("_fullPath", fullPath)

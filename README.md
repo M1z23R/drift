@@ -27,7 +27,8 @@ A fast, lightweight, and expressive web framework for Go, inspired by Gin and Ex
 ## Installation
 
 ```bash
-go get github.com/m1z23r/drift
+go get github.com/m1z23r/drift/pkg/drift
+go get github.com/m1z23r/drift/pkg/middleware
 ```
 
 ## Quick Start
@@ -36,8 +37,8 @@ go get github.com/m1z23r/drift
 package main
 
 import (
-    "github.com/m1z23r/drift"
-    "github.com/m1z23r/drift/middleware"
+    "github.com/m1z23r/drift/pkg/drift"
+    "github.com/m1z23r/drift/pkg/middleware"
 )
 
 func main() {
@@ -521,22 +522,27 @@ Then visit http://localhost:8080/sse for an interactive SSE demo
 
 ```
 drift/
-├── drift.go           # Main engine with environment modes
-├── context.go         # Request context with SSE support
-├── router.go          # Router and groups
-├── tree.go            # Radix tree for routing
-├── middleware/
-│   ├── cors.go        # CORS middleware
-│   ├── bodyparser.go  # Body parsing middleware
-│   ├── ratelimit.go   # Rate limiting middleware
-│   ├── csrf.go        # CSRF protection
-│   ├── security.go    # Security headers
-│   ├── recovery.go    # Panic recovery
-│   ├── compress.go    # Response compression
-│   └── timeout.go     # Request timeouts
+├── pkg/
+│   ├── drift/             # Public API - import this in your applications
+│   │   ├── drift.go       # Main engine with environment modes
+│   │   ├── context.go     # Request context with SSE support
+│   │   └── router.go      # Router and groups
+│   └── middleware/        # Public middleware - import this for middleware
+│       ├── cors.go        # CORS middleware
+│       ├── bodyparser.go  # Body parsing middleware
+│       ├── ratelimit.go   # Rate limiting middleware
+│       ├── csrf.go        # CSRF protection
+│       ├── security.go    # Security headers
+│       ├── recovery.go    # Panic recovery
+│       ├── compress.go    # Response compression
+│       └── timeout.go     # Request timeouts
+├── internal/
+│   └── router/            # Internal routing implementation (not importable)
+│       ├── tree.go        # Radix tree for routing
+│       └── utils.go       # Internal utilities
 └── examples/
-    ├── main.go        # Basic example
-    └── sse_example.go # Advanced features example
+    ├── main.go            # Basic example
+    └── sse_example.go     # Advanced features example
 ```
 
 ## Performance

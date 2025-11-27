@@ -3,7 +3,7 @@ package middleware
 import (
 	"strings"
 
-	"github.com/m1z23r/drift"
+	"github.com/m1z23r/drift/pkg/drift"
 )
 
 // CORSConfig defines the config for CORS middleware

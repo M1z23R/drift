@@ -1,4 +1,4 @@
-package drift
+package router
 
 // nodeType represents the type of route node
 type nodeType uint8
@@ -9,11 +9,14 @@ const (
 	catchAll                 // *param
 )
 
-// node represents a node in the radix tree
-type node struct {
+// HandlerFunc is a function that handles HTTP requests
+type HandlerFunc interface{}
+
+// Node represents a node in the radix tree
+type Node struct {
 	path      string
 	indices   string
-	children  []*node
+	children  []*Node
 	handlers  []HandlerFunc
 	priority  uint32
 	nType     nodeType
@@ -21,8 +24,13 @@ type node struct {
 	fullPath  string
 }
 
-// addRoute adds a route to the tree
-func (n *node) addRoute(path string, handlers []HandlerFunc) {
+// NewNode creates a new routing tree node
+func NewNode() *Node {
+	return &Node{}
+}
+
+// AddRoute adds a route to the tree
+func (n *Node) AddRoute(path string, handlers []HandlerFunc) {
 	fullPath := path
 	n.priority++
 
@@ -42,7 +50,7 @@ walk:
 
 		// Split edge
 		if i < len(n.path) {
-			child := &node{
+			child := &Node{
 				path:      n.path[i:],
 				wildChild: n.wildChild,
 				nType:     static,
@@ -53,7 +61,7 @@ walk:
 				fullPath:  n.fullPath,
 			}
 
-			n.children = []*node{child}
+			n.children = []*Node{child}
 			n.indices = string([]byte{n.path[i]})
 			n.path = path[:i]
 			n.handlers = nil
@@ -94,7 +102,7 @@ walk:
 			// Otherwise insert it
 			if idxc != ':' && idxc != '*' {
 				n.indices += string([]byte{idxc})
-				child := &node{
+				child := &Node{
 					fullPath: fullPath,
 				}
 				n.children = append(n.children, child)
@@ -117,7 +125,7 @@ walk:
 }
 
 // insertChild inserts a child node
-func (n *node) insertChild(path, fullPath string, handlers []HandlerFunc) {
+func (n *Node) insertChild(path, fullPath string, handlers []HandlerFunc) {
 	for {
 		// Find prefix until first wildcard
 		wildcard, i, valid := findWildcard(path)
@@ -147,12 +155,12 @@ func (n *node) insertChild(path, fullPath string, handlers []HandlerFunc) {
 			}
 
 			n.wildChild = true
-			child := &node{
+			child := &Node{
 				nType:    param,
 				path:     wildcard,
 				fullPath: fullPath,
 			}
-			n.children = []*node{child}
+			n.children = []*Node{child}
 			n = child
 			n.priority++
 
@@ -160,11 +168,11 @@ func (n *node) insertChild(path, fullPath string, handlers []HandlerFunc) {
 			// will be another non-wildcard subpath starting with '/'
 			if len(wildcard) < len(path) {
 				path = path[len(wildcard):]
-				child := &node{
+				child := &Node{
 					priority: 1,
 					fullPath: fullPath,
 				}
-				n.children = []*node{child}
+				n.children = []*Node{child}
 				n = child
 				continue
 			}
@@ -192,25 +200,25 @@ func (n *node) insertChild(path, fullPath string, handlers []HandlerFunc) {
 		n.path = path[:i]
 
 		// First node: catchAll node with empty path
-		child := &node{
+		child := &Node{
 			wildChild: true,
 			nType:     catchAll,
 			fullPath:  fullPath,
 		}
-		n.children = []*node{child}
+		n.children = []*Node{child}
 		n.indices = string('/')
 		n = child
 		n.priority++
 
 		// Second node: node holding the variable
-		child = &node{
+		child = &Node{
 			path:     path[i:],
 			nType:    catchAll,
 			handlers: handlers,
 			priority: 1,
 			fullPath: fullPath,
 		}
-		n.children = []*node{child}
+		n.children = []*Node{child}
 
 		return
 	}
@@ -221,8 +229,8 @@ func (n *node) insertChild(path, fullPath string, handlers []HandlerFunc) {
 	n.fullPath = fullPath
 }
 
-// getValue retrieves handlers and params for a given path
-func (n *node) getValue(path string) (handlers []HandlerFunc, params map[string]string, fullPath string) {
+// GetValue retrieves handlers and params for a given path
+func (n *Node) GetValue(path string) (handlers []HandlerFunc, params map[string]string, fullPath string) {
 	params = make(map[string]string)
 
 walk:
@@ -304,7 +312,7 @@ walk:
 }
 
 // incrementChildPrio increments the priority of the child at the given index
-func (n *node) incrementChildPrio(pos int) int {
+func (n *Node) incrementChildPrio(pos int) int {
 	cs := n.children
 	cs[pos].priority++
 	prio := cs[pos].priority

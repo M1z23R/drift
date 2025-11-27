@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/m1z23r/drift"
+	"github.com/m1z23r/drift/pkg/drift"
 )
 
 // BodyParserConfig defines the config for body parser middleware

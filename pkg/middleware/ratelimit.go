@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/m1z23r/drift"
+	"github.com/m1z23r/drift/pkg/drift"
 )
 
 // RateLimiterConfig defines the config for rate limiter middleware
