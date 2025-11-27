@@ -21,7 +21,8 @@ func main() {
 	// Recovery middleware - must be first to catch panics in other middleware
 	app.Use(middleware.Recovery())
 
-	// Compression middleware - compress responses
+	// Compression middleware - compress responses globally
+	// Use middleware.SkipCompression() on routes that shouldn't be compressed
 	app.Use(middleware.Compress())
 
 	// CORS
@@ -32,7 +33,7 @@ func main() {
 	// ========================================
 
 	// Simple SSE endpoint - sends time updates every second
-	app.Get("/sse/time", func(c *drift.Context) {
+	app.Get("/sse/time", middleware.SkipCompression(), func(c *drift.Context) {
 		sse := c.SSE()
 
 		// Send events for 10 seconds
@@ -47,7 +48,7 @@ func main() {
 	})
 
 	// SSE with JSON data
-	app.Get("/sse/updates", func(c *drift.Context) {
+	app.Get("/sse/updates", middleware.SkipCompression(), func(c *drift.Context) {
 		sse := c.SSE()
 
 		updates := []map[string]any{
@@ -69,7 +70,7 @@ func main() {
 	})
 
 	// SSE with keepalive comments
-	app.Get("/sse/keepalive", func(c *drift.Context) {
+	app.Get("/sse/keepalive", middleware.SkipCompression(), func(c *drift.Context) {
 		sse := c.SSE()
 
 		ticker := time.NewTicker(5 * time.Second)

@@ -45,7 +45,14 @@ func DefaultCompressionConfig() CompressionConfig {
 }
 
 // Compress returns a compression middleware with default config
+// Use this as a route-level middleware to enable compression for specific routes
 func Compress() drift.HandlerFunc {
+	return CompressWithConfig(DefaultCompressionConfig())
+}
+
+// CompressGlobal returns a compression middleware with default config for global use
+// This can be used with app.Use() to compress all responses
+func CompressGlobal() drift.HandlerFunc {
 	return CompressWithConfig(DefaultCompressionConfig())
 }
 
@@ -60,6 +67,12 @@ func CompressWithConfig(config CompressionConfig) drift.HandlerFunc {
 	}
 
 	return func(c *drift.Context) {
+		// Check if compression should be skipped (set by SkipCompression middleware)
+		if skip, exists := c.Get("skip_compression"); exists && skip.(bool) {
+			c.Next()
+			return
+		}
+
 		// Check if path is excluded
 		path := c.Path()
 		for _, excludedPath := range config.ExcludedPaths {
@@ -183,5 +196,15 @@ func (w *compressResponseWriter) Flush() {
 	}
 	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
+	}
+}
+
+// SkipCompression is a middleware that prevents compression for the current route
+// Use this on routes that should not be compressed (like SSE endpoints)
+// Must be used BEFORE the Compress middleware in the handler chain
+func SkipCompression() drift.HandlerFunc {
+	return func(c *drift.Context) {
+		c.Set("skip_compression", true)
+		c.Next()
 	}
 }
