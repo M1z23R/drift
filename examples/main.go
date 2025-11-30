@@ -328,10 +328,52 @@ func main() {
 	// Error Handling Examples
 	// ========================================
 
-	app.Get("/error", func(c *drift.Context) {
-		c.JSON(500, map[string]string{
-			"error": "Internal server error",
+	// Common HTTP errors with default messages
+	app.Get("/errors/400", func(c *drift.Context) {
+		c.BadRequest("")
+	})
+
+	app.Get("/errors/401", func(c *drift.Context) {
+		c.Unauthorized("")
+	})
+
+	app.Get("/errors/403", func(c *drift.Context) {
+		c.Forbidden("")
+	})
+
+	app.Get("/errors/404", func(c *drift.Context) {
+		c.NotFound("")
+	})
+
+	app.Get("/errors/500", func(c *drift.Context) {
+		c.InternalServerError("")
+	})
+
+	// HTTP errors with custom messages
+	app.Get("/errors/custom-message", func(c *drift.Context) {
+		c.BadRequest("The request body is missing required fields")
+	})
+
+	// Custom error with any status code
+	app.Get("/errors/custom-code", func(c *drift.Context) {
+		c.Error(418, "I'm a teapot")
+	})
+
+	// Custom error with custom data structure
+	app.Get("/errors/custom-data", func(c *drift.Context) {
+		c.ErrorWithData(422, map[string]any{
+			"error": "Validation failed",
+			"fields": map[string]string{
+				"email":    "Invalid email format",
+				"password": "Password must be at least 8 characters",
+			},
 		})
+	})
+
+	// Using HTTPError type directly
+	app.Get("/errors/http-error", func(c *drift.Context) {
+		err := drift.NewHTTPError(503, "Service temporarily unavailable")
+		c.AbortWithStatusJSON(err.Code, err)
 	})
 
 	app.Get("/redirect", func(c *drift.Context) {
@@ -363,6 +405,15 @@ func main() {
 	log.Println("  PUT    /resource/:id")
 	log.Println("  PATCH  /resource/:id")
 	log.Println("  DELETE /resource/:id")
+	log.Println("  GET    /errors/400 (Bad Request)")
+	log.Println("  GET    /errors/401 (Unauthorized)")
+	log.Println("  GET    /errors/403 (Forbidden)")
+	log.Println("  GET    /errors/404 (Not Found)")
+	log.Println("  GET    /errors/500 (Internal Server Error)")
+	log.Println("  GET    /errors/custom-message")
+	log.Println("  GET    /errors/custom-code")
+	log.Println("  GET    /errors/custom-data")
+	log.Println("  GET    /errors/http-error")
 
 	if err := app.Run(":8080"); err != nil {
 		log.Fatal(err)

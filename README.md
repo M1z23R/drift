@@ -347,6 +347,54 @@ c.StreamReader(dataReader, "application/json")
 c.StreamBytes(200, "image/png", imageBytes)
 ```
 
+## HTTP Error Helpers
+
+Drift provides convenient helpers for common HTTP errors:
+
+```go
+// Common HTTP errors with default messages
+c.BadRequest("")                 // 400
+c.Unauthorized("")               // 401
+c.Forbidden("")                  // 403
+c.NotFound("")                   // 404
+c.MethodNotAllowed("")           // 405
+c.Conflict("")                   // 409
+c.UnprocessableEntity("")        // 422
+c.TooManyRequests("")            // 429
+c.InternalServerError("")        // 500
+c.NotImplemented("")             // 501
+c.BadGateway("")                 // 502
+c.ServiceUnavailable("")         // 503
+c.GatewayTimeout("")             // 504
+
+// HTTP errors with custom messages
+c.BadRequest("Invalid email format")
+c.Unauthorized("Token expired")
+c.Forbidden("Insufficient permissions")
+
+// Custom error with any status code
+c.Error(418, "I'm a teapot")
+
+// Custom error with custom data structure
+c.ErrorWithData(422, map[string]any{
+    "error": "Validation failed",
+    "fields": map[string]string{
+        "email": "Invalid format",
+        "password": "Too short",
+    },
+})
+
+// Create HTTPError type for reusable errors
+err := drift.NewHTTPError(503, "Database unavailable")
+c.AbortWithStatusJSON(err.Code, err)
+```
+
+All error helpers automatically:
+- Set the appropriate HTTP status code
+- Abort the middleware chain
+- Send a JSON response with `code` and `message` fields
+- Use standard HTTP status text when message is empty
+
 ## Request Helpers
 
 ```go
