@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/m1z23r/drift/pkg/drift"
@@ -65,17 +66,39 @@ func CORSWithConfig(config CORSConfig) drift.HandlerFunc {
 		origin := c.GetHeader("Origin")
 
 		// Check if origin is allowed
-		allowOrigin := "*"
-		if len(config.AllowOrigins) > 0 && config.AllowOrigins[0] != "*" {
-			allowOrigin = ""
+		var allowOrigin string
+
+		// Handle wildcard with credentials (must echo origin, not send *)
+		if config.AllowCredentials && len(config.AllowOrigins) == 1 && config.AllowOrigins[0] == "*" {
+			if origin != "" {
+				allowOrigin = origin
+			} else {
+				// No origin header - allow the request but don't set CORS headers
+				c.Next()
+				return
+			}
+		} else if len(config.AllowOrigins) > 0 && config.AllowOrigins[0] == "*" {
+			// Wildcard without credentials
+			allowOrigin = "*"
+		} else {
+			// Specific origins configured - check if request origin is allowed
 			for _, o := range config.AllowOrigins {
 				if o == origin || o == "*" {
 					allowOrigin = origin
 					break
 				}
 			}
-			if allowOrigin == "" {
-				allowOrigin = config.AllowOrigins[0]
+
+			// Origin not in allowed list - reject
+			if allowOrigin == "" && origin != "" {
+				c.AbortWithStatus(403)
+				return
+			}
+
+			// No origin header means same-origin request - allow it
+			if origin == "" {
+				c.Next()
+				return
 			}
 		}
 
@@ -93,7 +116,7 @@ func CORSWithConfig(config CORSConfig) drift.HandlerFunc {
 		}
 
 		if config.MaxAge > 0 {
-			c.Header("Access-Control-Max-Age", string(rune(config.MaxAge)))
+			c.Header("Access-Control-Max-Age", strconv.Itoa(config.MaxAge))
 		}
 
 		// Handle preflight requests

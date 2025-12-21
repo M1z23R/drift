@@ -141,12 +141,18 @@ func (engine *Engine) handleRequest(c *Context) {
 		}
 	}
 
-	// No route found
-	c.handlers = []HandlerFunc{func(c *Context) {
+	// No route found - include global middleware with 404 handler
+	notFoundHandler := func(c *Context) {
 		c.JSON(http.StatusNotFound, map[string]string{
 			"error": "Not Found",
 		})
-	}}
+	}
+
+	// Combine global middleware with 404 handler
+	globalHandlers := engine.RouterGroup.handlers
+	c.handlers = make([]HandlerFunc, len(globalHandlers)+1)
+	copy(c.handlers, globalHandlers)
+	c.handlers[len(globalHandlers)] = notFoundHandler
 	c.Next()
 }
 
