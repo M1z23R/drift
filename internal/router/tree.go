@@ -172,6 +172,7 @@ func (n *Node) insertChild(path, fullPath string, handlers []HandlerFunc) {
 					priority: 1,
 					fullPath: fullPath,
 				}
+				n.indices = string(path[0])
 				n.children = []*Node{child}
 				n = child
 				continue
@@ -267,8 +268,16 @@ walk:
 						if end < len(path) {
 							if len(n.children) > 0 {
 								path = path[end:]
-								n = n.children[0]
-								continue walk
+								// Use indices to find the correct child
+								idxc := path[0]
+								for i, c := range []byte(n.indices) {
+									if c == idxc {
+										n = n.children[i]
+										continue walk
+									}
+								}
+								// No matching child found
+								return nil, nil, ""
 							}
 
 							// ... but we can't
