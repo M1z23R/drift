@@ -20,9 +20,10 @@ const (
 // Engine is the main framework instance
 type Engine struct {
 	RouterGroup
-	pool  sync.Pool
-	trees map[string]*router.Node // method -> radix tree
-	mode  Mode
+	pool            sync.Pool
+	trees           map[string]*router.Node // method -> radix tree
+	mode            Mode
+	noRouteHandlers []HandlerFunc
 }
 
 // New creates a new Engine instance in debug mode
@@ -141,18 +142,23 @@ func (engine *Engine) handleRequest(c *Context) {
 		}
 	}
 
-	// No route found - include global middleware with 404 handler
-	notFoundHandler := func(c *Context) {
-		c.JSON(http.StatusNotFound, map[string]string{
-			"error": "Not Found",
-		})
+	// No route found - use custom noRoute handlers or default 404
+	var noRouteHandlers []HandlerFunc
+	if len(engine.noRouteHandlers) > 0 {
+		noRouteHandlers = engine.noRouteHandlers
+	} else {
+		noRouteHandlers = []HandlerFunc{func(c *Context) {
+			c.JSON(http.StatusNotFound, map[string]string{
+				"error": "Not Found",
+			})
+		}}
 	}
 
-	// Combine global middleware with 404 handler
+	// Combine global middleware with noRoute handlers
 	globalHandlers := engine.RouterGroup.handlers
-	c.handlers = make([]HandlerFunc, len(globalHandlers)+1)
+	c.handlers = make([]HandlerFunc, len(globalHandlers)+len(noRouteHandlers))
 	copy(c.handlers, globalHandlers)
-	c.handlers[len(globalHandlers)] = notFoundHandler
+	copy(c.handlers[len(globalHandlers):], noRouteHandlers)
 	c.Next()
 }
 
@@ -172,8 +178,7 @@ func (engine *Engine) RunTLS(addr, certFile, keyFile string) error {
 
 // NoRoute registers handlers for when no route is matched
 func (engine *Engine) NoRoute(handlers ...HandlerFunc) {
-	// This would require storing and using custom 404 handlers
-	// Simplified version - could be enhanced
+	engine.noRouteHandlers = handlers
 }
 
 // NoMethod registers handlers for when the method is not allowed
