@@ -22,6 +22,7 @@ A fast, lightweight, and expressive web framework for Go, inspired by Gin and Ex
 - **Response Helpers**: `.JSON()`, `.String()`, `.HTML()`, `.Redirect()`, and more
 - **File Streaming**: Efficient file serving without loading into memory
 - **Server-Sent Events (SSE)**: Real-time server-to-client streaming
+- **WebSockets**: Full-duplex bidirectional communication (RFC 6455 compliant)
 - **Environment Modes**: Debug and release modes with automatic logging control
 
 ## Installation
@@ -29,6 +30,7 @@ A fast, lightweight, and expressive web framework for Go, inspired by Gin and Ex
 ```bash
 go get github.com/m1z23r/drift/pkg/drift
 go get github.com/m1z23r/drift/pkg/middleware
+go get github.com/m1z23r/drift/pkg/websocket
 ```
 
 ## Quick Start
@@ -544,6 +546,208 @@ eventSource.onerror = () => {
 };
 ```
 
+## WebSockets
+
+Full-duplex bidirectional communication over a single TCP connection:
+
+```go
+import "github.com/m1z23r/drift/pkg/websocket"
+
+// WebSocket endpoint - skip compression for websocket upgrades
+app.Get("/ws", middleware.SkipCompression(), func(c *drift.Context) {
+    conn, err := websocket.Upgrade(c)
+    if err != nil {
+        log.Printf("WebSocket upgrade failed: %v", err)
+        return
+    }
+    defer conn.Close(websocket.CloseNormalClosure, "bye")
+
+    for {
+        msgType, data, err := conn.ReadMessage()
+        if err != nil {
+            break // Client disconnected
+        }
+        // Echo message back
+        conn.WriteMessage(msgType, data)
+    }
+})
+```
+
+**Important**: When using global compression middleware, WebSocket routes must use `middleware.SkipCompression()` before the handler to prevent interference with the HTTP upgrade.
+
+### Connection Methods
+
+```go
+// Read a complete message (handles fragmentation automatically)
+msgType, data, err := conn.ReadMessage()
+
+// Write messages
+conn.WriteMessage(websocket.TextMessage, []byte("Hello"))
+conn.WriteText("Hello")           // Convenience for text
+conn.WriteBinary(data)            // Convenience for binary
+
+// JSON support
+conn.WriteJSON(map[string]any{"key": "value"})
+var msg MyStruct
+conn.ReadJSON(&msg)
+
+// Control frames
+conn.Ping([]byte("ping"))
+
+// Close connection with code and reason
+conn.Close(websocket.CloseNormalClosure, "goodbye")
+```
+
+### Message Types
+
+```go
+websocket.TextMessage   // UTF-8 text data
+websocket.BinaryMessage // Binary data
+```
+
+### Close Codes
+
+```go
+websocket.CloseNormalClosure           // 1000 - Normal closure
+websocket.CloseGoingAway               // 1001 - Endpoint going away
+websocket.CloseProtocolError           // 1002 - Protocol error
+websocket.CloseUnsupportedData         // 1003 - Unsupported data
+websocket.CloseNoStatusReceived        // 1005 - No status received
+websocket.CloseAbnormalClosure         // 1006 - Abnormal closure
+websocket.CloseInvalidFramePayloadData // 1007 - Invalid payload
+websocket.ClosePolicyViolation         // 1008 - Policy violation
+websocket.CloseMessageTooBig           // 1009 - Message too big
+websocket.CloseMandatoryExtension      // 1010 - Mandatory extension
+websocket.CloseInternalServerErr       // 1011 - Internal server error
+websocket.CloseTLSHandshake            // 1015 - TLS handshake error
+```
+
+### Custom Upgrader
+
+```go
+upgrader := &websocket.Upgrader{
+    ReadBufferSize:  4096,
+    WriteBufferSize: 4096,
+    ReadLimit:       32 * 1024 * 1024, // 32MB max message size
+    CheckOrigin: func(r *http.Request) bool {
+        // Custom origin validation
+        return r.Header.Get("Origin") == "https://example.com"
+    },
+    Subprotocols: []string{"graphql-ws", "subscriptions-transport-ws"},
+}
+
+conn, err := upgrader.Upgrade(c)
+```
+
+### Connection Settings
+
+```go
+// Set maximum message size
+conn.SetReadLimit(64 * 1024 * 1024) // 64MB
+
+// Set deadlines
+conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+
+// Get connection info
+remoteAddr := conn.RemoteAddr()
+localAddr := conn.LocalAddr()
+
+// Access close information after disconnect
+code := conn.CloseCode()
+text := conn.CloseText()
+```
+
+### Chat Server Example
+
+```go
+type Client struct {
+    conn *websocket.Conn
+    send chan []byte
+}
+
+var clients = make(map[*Client]bool)
+var broadcast = make(chan []byte)
+var mu sync.Mutex
+
+app.Get("/ws/chat", middleware.SkipCompression(), func(c *drift.Context) {
+    conn, err := websocket.Upgrade(c)
+    if err != nil {
+        return
+    }
+
+    client := &Client{conn: conn, send: make(chan []byte, 256)}
+
+    mu.Lock()
+    clients[client] = true
+    mu.Unlock()
+
+    defer func() {
+        mu.Lock()
+        delete(clients, client)
+        mu.Unlock()
+        conn.Close(websocket.CloseNormalClosure, "")
+    }()
+
+    // Writer goroutine
+    go func() {
+        for msg := range client.send {
+            if err := conn.WriteText(string(msg)); err != nil {
+                return
+            }
+        }
+    }()
+
+    // Reader loop
+    for {
+        _, data, err := conn.ReadMessage()
+        if err != nil {
+            break
+        }
+        broadcast <- data
+    }
+})
+
+// Broadcast goroutine (start once)
+go func() {
+    for msg := range broadcast {
+        mu.Lock()
+        for client := range clients {
+            select {
+            case client.send <- msg:
+            default:
+                close(client.send)
+                delete(clients, client)
+            }
+        }
+        mu.Unlock()
+    }
+}()
+```
+
+Client-side JavaScript:
+
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws/chat');
+
+ws.onopen = () => {
+    console.log('Connected');
+    ws.send('Hello, server!');
+};
+
+ws.onmessage = (event) => {
+    console.log('Received:', event.data);
+};
+
+ws.onclose = (event) => {
+    console.log('Disconnected:', event.code, event.reason);
+};
+
+ws.onerror = (error) => {
+    console.error('WebSocket error:', error);
+};
+```
+
 ## Example Applications
 
 ### Basic Example
@@ -566,6 +770,16 @@ go run examples/sse_example.go
 
 Then visit http://localhost:8080/sse for an interactive SSE demo
 
+### WebSocket Example
+
+See [examples/websocket_example.go](examples/websocket_example.go) for a WebSocket echo server example.
+
+```bash
+go run examples/websocket_example.go
+```
+
+Then connect to ws://localhost:8080/ws with a WebSocket client
+
 ## Project Structure
 
 ```
@@ -575,22 +789,27 @@ drift/
 │   │   ├── drift.go       # Main engine with environment modes
 │   │   ├── context.go     # Request context with SSE support
 │   │   └── router.go      # Router and groups
-│   └── middleware/        # Public middleware - import this for middleware
-│       ├── cors.go        # CORS middleware
-│       ├── bodyparser.go  # Body parsing middleware
-│       ├── ratelimit.go   # Rate limiting middleware
-│       ├── csrf.go        # CSRF protection
-│       ├── security.go    # Security headers
-│       ├── recovery.go    # Panic recovery
-│       ├── compress.go    # Response compression
-│       └── timeout.go     # Request timeouts
+│   ├── middleware/        # Public middleware - import this for middleware
+│   │   ├── cors.go        # CORS middleware
+│   │   ├── bodyparser.go  # Body parsing middleware
+│   │   ├── ratelimit.go   # Rate limiting middleware
+│   │   ├── csrf.go        # CSRF protection
+│   │   ├── security.go    # Security headers
+│   │   ├── recovery.go    # Panic recovery
+│   │   ├── compress.go    # Response compression
+│   │   └── timeout.go     # Request timeouts
+│   └── websocket/         # WebSocket support (RFC 6455)
+│       ├── websocket.go   # Connection management and upgrader
+│       ├── frame.go       # Frame encoding/decoding
+│       └── handshake.go   # HTTP upgrade handshake
 ├── internal/
 │   └── router/            # Internal routing implementation (not importable)
 │       ├── tree.go        # Radix tree for routing
 │       └── utils.go       # Internal utilities
 └── examples/
     ├── main.go            # Basic example
-    └── sse_example.go     # Advanced features example
+    ├── sse_example.go     # SSE features example
+    └── websocket_example.go # WebSocket echo server
 ```
 
 ## Performance
