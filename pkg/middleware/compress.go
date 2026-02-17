@@ -1,9 +1,12 @@
 package middleware
 
 import (
+	"bufio"
 	"compress/flate"
 	"compress/gzip"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 
@@ -197,6 +200,14 @@ func (w *compressResponseWriter) Flush() {
 	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}
+}
+
+// Hijack implements http.Hijacker to support WebSocket upgrades
+func (w *compressResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, errors.New("websocket: response does not implement http.Hijacker")
 }
 
 // SkipCompression is a middleware that prevents compression for the current route
