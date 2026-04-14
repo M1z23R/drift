@@ -69,7 +69,7 @@ func (group *RouterGroup) Static(relativePath, root string) {
 	handler := func(c *Context) {
 		// Simple static file serving
 		// In production, you'd want to use http.FileServer
-		c.String(200, "Static file serving for: "+root)
+		c.String(200, "Static file serving for: %s", root)
 	}
 	urlPattern := joinPaths(relativePath, "/*filepath")
 	group.Get(urlPattern, handler)
