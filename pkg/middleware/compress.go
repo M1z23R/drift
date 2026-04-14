@@ -2,12 +2,14 @@ package middleware
 
 import (
 	"bufio"
+	"bytes"
 	"compress/flate"
 	"compress/gzip"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/m1z23r/drift/pkg/drift"
@@ -35,7 +37,7 @@ type CompressionConfig struct {
 // DefaultCompressionConfig returns a default compression configuration
 func DefaultCompressionConfig() CompressionConfig {
 	return CompressionConfig{
-		Level:     -1, // default compression
+		Level:     -1,   // default compression
 		MinLength: 1024, // 1 KB
 		ExcludedExtensions: []string{
 			".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
@@ -70,13 +72,11 @@ func CompressWithConfig(config CompressionConfig) drift.HandlerFunc {
 	}
 
 	return func(c *drift.Context) {
-		// Check if compression should be skipped (set by SkipCompression middleware)
 		if skip, exists := c.Get("skip_compression"); exists && skip.(bool) {
 			c.Next()
 			return
 		}
 
-		// Check if path is excluded
 		path := c.Path()
 		for _, excludedPath := range config.ExcludedPaths {
 			if strings.HasPrefix(path, excludedPath) {
@@ -85,7 +85,6 @@ func CompressWithConfig(config CompressionConfig) drift.HandlerFunc {
 			}
 		}
 
-		// Check if extension is excluded
 		for _, ext := range config.ExcludedExtensions {
 			if strings.HasSuffix(path, ext) {
 				c.Next()
@@ -93,107 +92,65 @@ func CompressWithConfig(config CompressionConfig) drift.HandlerFunc {
 			}
 		}
 
-		// Get accepted encodings
-		acceptEncoding := c.GetHeader("Accept-Encoding")
-		if acceptEncoding == "" {
-			c.Next()
-			return
-		}
-
-		// Create a custom response writer
-		var writer io.WriteCloser
+		// Select encoding from Accept-Encoding. Empty encoding means write
+		// through uncompressed (no client support).
 		var encoding string
-
+		acceptEncoding := c.GetHeader("Accept-Encoding")
 		if strings.Contains(acceptEncoding, "gzip") {
 			encoding = "gzip"
-			gzipWriter, err := gzip.NewWriterLevel(c.Response, config.Level)
-			if err != nil {
-				c.Next()
-				return
-			}
-			writer = gzipWriter
 		} else if strings.Contains(acceptEncoding, "deflate") {
 			encoding = "deflate"
-			deflateWriter, err := flate.NewWriter(c.Response, config.Level)
-			if err != nil {
-				c.Next()
-				return
-			}
-			writer = deflateWriter
-		} else {
-			c.Next()
-			return
 		}
 
-		// Wrap the response writer
 		crw := &compressResponseWriter{
 			ResponseWriter: c.Response,
-			writer:         writer,
 			encoding:       encoding,
 			minLength:      config.MinLength,
+			level:          config.Level,
 		}
 
-		// Replace the response writer
+		original := c.Response
 		c.Response = crw
 
-		// Execute the next handler
 		c.Next()
 
-		// Only close the compressed writer if compression was actually used
-		if crw.compressed {
-			writer.Close()
-		}
+		// Restore and flush. If the connection was hijacked (websocket), the
+		// writer is marked passthrough and there's nothing to flush.
+		c.Response = original
+		crw.flush()
 	}
 }
 
-// compressResponseWriter wraps http.ResponseWriter with compression
+// compressResponseWriter buffers the response body and compresses it on flush
+// once the full size is known, so that Content-Encoding / Content-Length /
+// Vary headers can be set before WriteHeader is propagated to the client.
 type compressResponseWriter struct {
 	http.ResponseWriter
-	writer     io.WriteCloser
-	encoding   string
-	minLength  int
-	written    int
-	headerSet  bool
-	compressed bool
+	buf         bytes.Buffer
+	encoding    string
+	minLength   int
+	level       int
+	statusCode  int
+	passthrough bool // set when buffering is bypassed (e.g. Hijack)
 }
 
-// Write compresses and writes data to the response
+// Write buffers the response body. No data reaches the underlying writer
+// until flush() runs, after the handler returns.
 func (w *compressResponseWriter) Write(data []byte) (int, error) {
-	// Set headers on first write
-	if !w.headerSet {
-		w.headerSet = true
-
-		// Check if we should compress based on content length
-		if len(data) < w.minLength {
-			// Don't compress, write directly
-			return w.ResponseWriter.Write(data)
-		}
-
-		// Set compression header
-		w.compressed = true
-		w.ResponseWriter.Header().Set("Content-Encoding", w.encoding)
-		w.ResponseWriter.Header().Del("Content-Length")
-		w.ResponseWriter.Header().Add("Vary", "Accept-Encoding")
-	}
-
-	// If compression was bypassed on the first write, continue writing directly
-	if !w.compressed {
+	if w.passthrough {
 		return w.ResponseWriter.Write(data)
 	}
-
-	// Write compressed data
-	n, err := w.writer.Write(data)
-	if err != nil {
-		return n, err
-	}
-
-	w.written += n
-	return len(data), nil // Return original length
+	return w.buf.Write(data)
 }
 
-// WriteHeader writes the status code
+// WriteHeader captures the status code without propagating it. Headers remain
+// mutable until flush() commits them.
 func (w *compressResponseWriter) WriteHeader(statusCode int) {
-	w.ResponseWriter.WriteHeader(statusCode)
+	if w.passthrough {
+		w.ResponseWriter.WriteHeader(statusCode)
+		return
+	}
+	w.statusCode = statusCode
 }
 
 // Header returns the response headers
@@ -201,22 +158,88 @@ func (w *compressResponseWriter) Header() http.Header {
 	return w.ResponseWriter.Header()
 }
 
-// Flush flushes the compressed data
+// flush commits headers and body to the underlying ResponseWriter, compressing
+// the buffered body if it meets the threshold and the client supports it.
+func (w *compressResponseWriter) flush() {
+	if w.passthrough {
+		return
+	}
+
+	status := w.statusCode
+	if status == 0 {
+		status = http.StatusOK
+	}
+
+	body := w.buf.Bytes()
+	h := w.ResponseWriter.Header()
+
+	if w.encoding != "" && len(body) >= w.minLength {
+		var compressed bytes.Buffer
+		var writer io.WriteCloser
+		var err error
+
+		switch w.encoding {
+		case "gzip":
+			writer, err = gzip.NewWriterLevel(&compressed, w.level)
+		case "deflate":
+			writer, err = flate.NewWriter(&compressed, w.level)
+		}
+
+		if err == nil {
+			if _, werr := writer.Write(body); werr == nil {
+				if cerr := writer.Close(); cerr == nil {
+					h.Set("Content-Encoding", w.encoding)
+					h.Set("Vary", "Accept-Encoding")
+					h.Set("Content-Length", strconv.Itoa(compressed.Len()))
+					w.ResponseWriter.WriteHeader(status)
+					_, _ = w.ResponseWriter.Write(compressed.Bytes())
+					return
+				}
+			}
+		}
+		// Fall through to uncompressed on any compression error.
+	}
+
+	h.Set("Content-Length", strconv.Itoa(len(body)))
+	w.ResponseWriter.WriteHeader(status)
+	if len(body) > 0 {
+		_, _ = w.ResponseWriter.Write(body)
+	}
+}
+
+// Flush flushes buffered data through as uncompressed, then flushes the
+// underlying writer. Once flushed, subsequent writes go straight through.
+// This preserves streaming semantics for callers that explicitly flush, at
+// the cost of skipping compression for that response.
 func (w *compressResponseWriter) Flush() {
-	if flusher, ok := w.writer.(interface{ Flush() error }); ok {
-		flusher.Flush()
+	if !w.passthrough {
+		status := w.statusCode
+		if status == 0 {
+			status = http.StatusOK
+		}
+		body := w.buf.Bytes()
+		w.ResponseWriter.Header().Del("Content-Length")
+		w.ResponseWriter.WriteHeader(status)
+		if len(body) > 0 {
+			_, _ = w.ResponseWriter.Write(body)
+		}
+		w.buf.Reset()
+		w.passthrough = true
 	}
 	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}
 }
 
-// Hijack implements http.Hijacker to support WebSocket upgrades
+// Hijack implements http.Hijacker to support WebSocket upgrades. Hijacking
+// bypasses compression entirely — the caller takes over the raw connection.
 func (w *compressResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if hj, ok := w.ResponseWriter.(http.Hijacker); ok {
-		return hj.Hijack()
+	hj, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("websocket: response does not implement http.Hijacker")
 	}
-	return nil, nil, errors.New("websocket: response does not implement http.Hijacker")
+	w.passthrough = true
+	return hj.Hijack()
 }
 
 // SkipCompression is a middleware that prevents compression for the current route
