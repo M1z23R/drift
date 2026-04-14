@@ -139,19 +139,22 @@ func CompressWithConfig(config CompressionConfig) drift.HandlerFunc {
 		// Execute the next handler
 		c.Next()
 
-		// Close the writer to flush any remaining data
-		writer.Close()
+		// Only close the compressed writer if compression was actually used
+		if crw.compressed {
+			writer.Close()
+		}
 	}
 }
 
 // compressResponseWriter wraps http.ResponseWriter with compression
 type compressResponseWriter struct {
 	http.ResponseWriter
-	writer    io.WriteCloser
-	encoding  string
-	minLength int
-	written   int
-	headerSet bool
+	writer     io.WriteCloser
+	encoding   string
+	minLength  int
+	written    int
+	headerSet  bool
+	compressed bool
 }
 
 // Write compresses and writes data to the response
@@ -167,9 +170,15 @@ func (w *compressResponseWriter) Write(data []byte) (int, error) {
 		}
 
 		// Set compression header
+		w.compressed = true
 		w.ResponseWriter.Header().Set("Content-Encoding", w.encoding)
 		w.ResponseWriter.Header().Del("Content-Length")
 		w.ResponseWriter.Header().Add("Vary", "Accept-Encoding")
+	}
+
+	// If compression was bypassed on the first write, continue writing directly
+	if !w.compressed {
+		return w.ResponseWriter.Write(data)
 	}
 
 	// Write compressed data
