@@ -12,15 +12,22 @@ const (
 // HandlerFunc is a function that handles HTTP requests
 type HandlerFunc interface{}
 
-// Node represents a node in the radix tree
+// Node represents a node in the radix tree.
+//
+// Children layout:
+//   - children:  static children only, indexed positionally by `indices`
+//   - wildChild: optional wildcard child (param OR catchAll, never both)
+//
+// A node may hold both static children and a wildChild simultaneously;
+// lookup prefers static, then falls back to wildChild.
 type Node struct {
 	path      string
 	indices   string
 	children  []*Node
+	wildChild *Node
 	handlers  []HandlerFunc
 	priority  uint32
 	nType     nodeType
-	wildChild bool
 	fullPath  string
 }
 
@@ -35,7 +42,7 @@ func (n *Node) AddRoute(path string, handlers []HandlerFunc) {
 	n.priority++
 
 	// Empty tree
-	if len(n.path) == 0 && len(n.children) == 0 {
+	if len(n.path) == 0 && len(n.children) == 0 && n.wildChild == nil {
 		n.insertChild(path, fullPath, handlers)
 		n.nType = static
 		return
@@ -45,76 +52,99 @@ func (n *Node) AddRoute(path string, handlers []HandlerFunc) {
 
 walk:
 	for {
-		// Find the longest common prefix
+		// Find the longest common prefix between the incoming path and this node's path.
 		i := longestCommonPrefix(path, n.path)
 
-		// Split edge
+		// Split this node if the incoming path diverges inside n.path.
 		if i < len(n.path) {
 			child := &Node{
 				path:      n.path[i:],
-				wildChild: n.wildChild,
 				nType:     static,
 				indices:   n.indices,
 				children:  n.children,
+				wildChild: n.wildChild,
 				handlers:  n.handlers,
 				priority:  n.priority - 1,
 				fullPath:  n.fullPath,
 			}
 
 			n.children = []*Node{child}
+			n.wildChild = nil
 			n.indices = string([]byte{n.path[i]})
 			n.path = path[:i]
 			n.handlers = nil
-			n.wildChild = false
 			n.fullPath = fullPath[:parentFullPathIndex+i]
 		}
 
-		// Make new node a child of this node
+		// Descend into / create a child for the remaining suffix.
 		if i < len(path) {
 			path = path[i:]
-
-			if n.wildChild {
-				parentFullPathIndex += len(n.path)
-				n = n.children[0]
-				n.priority++
-
-				// Check if the wildcard matches
-				if len(path) >= len(n.path) && n.path == path[:len(n.path)] &&
-					(len(n.path) >= len(path) || path[len(n.path)] == '/') {
-					continue walk
-				} else {
-					panic("conflict with wildcard route")
-				}
-			}
-
 			idxc := path[0]
 
-			// Check if a child with the next path byte exists
-			for i, c := range []byte(n.indices) {
+			// Wildcard segment in the incoming path?
+			if idxc == ':' || idxc == '*' {
+				// If a wildChild already exists, it must agree with this one.
+				if n.wildChild != nil {
+					parentFullPathIndex += len(n.path)
+					existing := n.wildChild
+					existing.priority++
+
+					// Find end of incoming wildcard token.
+					end := 1
+					for end < len(path) && path[end] != '/' {
+						end++
+					}
+					incomingToken := path[:end]
+
+					if existing.path != incomingToken {
+						panic("wildcard '" + incomingToken +
+							"' conflicts with existing wildcard '" + existing.path +
+							"' at the same path slot: " + fullPath +
+							" vs " + existing.fullPath)
+					}
+
+					// Same-name wildcard: descend into the param node. Leave the
+					// wildcard token on `path` so the next walk iteration consumes
+					// it via the longest-common-prefix split against existing.path.
+					n = existing
+					continue walk
+				}
+				// No existing wildChild: insertChild handles creation.
+				n.insertChild(path, fullPath, handlers)
+				return
+			}
+
+			// Static segment in the incoming path.
+
+			// Catch-all wildChild is exclusive — no static sibling allowed.
+			if n.wildChild != nil && n.wildChild.nType == catchAll {
+				panic("catch-all conflicts with static sibling at: " + fullPath)
+			}
+
+			// Check if a static child with the next path byte exists.
+			for childIdx, c := range []byte(n.indices) {
 				if c == idxc {
 					parentFullPathIndex += len(n.path)
-					i = n.incrementChildPrio(i)
-					n = n.children[i]
+					childIdx = n.incrementChildPrio(childIdx)
+					n = n.children[childIdx]
 					continue walk
 				}
 			}
 
-			// Otherwise insert it
-			if idxc != ':' && idxc != '*' {
-				n.indices += string([]byte{idxc})
-				child := &Node{
-					fullPath: fullPath,
-				}
-				n.children = append(n.children, child)
-				n.incrementChildPrio(len(n.indices) - 1)
-				n = child
+			// Otherwise insert a new static child.
+			n.indices += string([]byte{idxc})
+			child := &Node{
+				fullPath: fullPath,
 			}
+			n.children = append(n.children, child)
+			n.incrementChildPrio(len(n.indices) - 1)
+			n = child
 
 			n.insertChild(path, fullPath, handlers)
 			return
 		}
 
-		// Otherwise add handlers to current node
+		// Path consumed exactly at this node — register handlers here.
 		if n.handlers != nil {
 			panic("handlers are already registered for path '" + fullPath + "'")
 		}
@@ -124,228 +154,212 @@ walk:
 	}
 }
 
-// insertChild inserts a child node
+// insertChild handles inserting the remaining suffix `path` under node n.
+// On entry n is a freshly-positioned cursor: either a new empty node, or an
+// existing node we've decided to grow from.
 func (n *Node) insertChild(path, fullPath string, handlers []HandlerFunc) {
 	for {
-		// Find prefix until first wildcard
 		wildcard, i, valid := findWildcard(path)
 		if i < 0 {
 			break
 		}
-
 		if !valid {
 			panic("only one wildcard per path segment is allowed")
 		}
-
-		// Check if the wildcard has a name
 		if len(wildcard) < 2 {
 			panic("wildcards must be named with a non-empty name")
 		}
 
-		// Check if this node has existing children
-		if len(n.children) > 0 {
-			panic("wildcard segment conflicts with existing children")
-		}
-
-		// param
+		// param: ':name'
 		if wildcard[0] == ':' {
+			// Literal prefix before the wildcard (e.g. "users/" in "users/:id").
 			if i > 0 {
 				n.path = path[:i]
 				path = path[i:]
 			}
 
-			n.wildChild = true
+			// Attach param as wildChild.
+			if n.wildChild != nil {
+				panic("internal: wildChild already set on node for " + fullPath)
+			}
 			child := &Node{
 				nType:    param,
 				path:     wildcard,
 				fullPath: fullPath,
+				priority: 1,
 			}
-			n.children = []*Node{child}
+			n.wildChild = child
 			n = child
-			n.priority++
 
-			// If the path doesn't end with the wildcard, then there
-			// will be another non-wildcard subpath starting with '/'
+			// If suffix remains after the param, recurse into a new static child.
 			if len(wildcard) < len(path) {
 				path = path[len(wildcard):]
-				child := &Node{
+				next := &Node{
 					priority: 1,
 					fullPath: fullPath,
 				}
 				n.indices = string(path[0])
-				n.children = []*Node{child}
-				n = child
+				n.children = []*Node{next}
+				n = next
 				continue
 			}
 
-			// Otherwise we're done
 			n.handlers = handlers
 			return
 		}
 
-		// catchAll
+		// catchAll: '*name'
 		if i+len(wildcard) != len(path) {
 			panic("catch-all routes are only allowed at the end of the path")
 		}
-
 		if len(n.path) > 0 && n.path[len(n.path)-1] == '/' {
 			panic("catch-all conflicts with existing handle for the path segment root")
 		}
-
-		// currently fixed width 1 for '/'
-		i--
-		if path[i] != '/' {
+		j := i - 1
+		if path[j] != '/' {
 			panic("no / before catch-all")
 		}
+		// Literal prefix up to and including the '/' lands on n.path.
+		n.path = path[:j+1]
 
-		n.path = path[:i]
-
-		// First node: catchAll node with empty path
-		child := &Node{
-			wildChild: true,
-			nType:     catchAll,
-			fullPath:  fullPath,
+		if len(n.children) > 0 || n.wildChild != nil {
+			panic("catch-all conflicts with existing children at: " + fullPath)
 		}
-		n.children = []*Node{child}
-		n.indices = string('/')
-		n = child
-		n.priority++
 
-		// Second node: node holding the variable
-		child = &Node{
-			path:     path[i:],
+		child := &Node{
+			path:     path[j+1:],
 			nType:    catchAll,
 			handlers: handlers,
 			priority: 1,
 			fullPath: fullPath,
 		}
-		n.children = []*Node{child}
-
+		n.wildChild = child
 		return
 	}
 
-	// If no wildcard was found, simply insert the path and handlers
+	// No wildcard in the remaining path — pure static suffix.
 	n.path = path
 	n.handlers = handlers
 	n.fullPath = fullPath
 }
 
-// GetValue retrieves handlers and params for a given path
+// GetValue retrieves handlers and params for a given path.
+// At each slot, static children are tried first via the indices table;
+// on a no-match-in-subtree result, lookup backtracks to wildChild.
 func (n *Node) GetValue(path string) (handlers []HandlerFunc, params map[string]string, fullPath string) {
 	params = make(map[string]string)
+	if h, fp, ok := walkLookup(n, path, params); ok {
+		return h, params, fp
+	}
+	return nil, nil, ""
+}
 
-walk:
-	for {
-		prefix := n.path
-		if len(path) > len(prefix) {
-			if path[:len(prefix)] == prefix {
-				path = path[len(prefix):]
+// walkLookup is the recursive matcher. Returns ok=true iff a handler was found
+// in this subtree. Params are mutated in place; on a non-match the caller must
+// discard any param writes it made before recursing.
+func walkLookup(n *Node, path string, params map[string]string) (handlers []HandlerFunc, fullPath string, ok bool) {
+	prefix := n.path
 
-				// Try all the non-wildcard children first
-				idxc := path[0]
-				for i, c := range []byte(n.indices) {
-					if c == idxc {
-						n = n.children[i]
-						continue walk
-					}
+	if len(path) > len(prefix) {
+		if path[:len(prefix)] != prefix {
+			return nil, "", false
+		}
+		rest := path[len(prefix):]
+		idxc := rest[0]
+
+		// 1. Try the matching static child (at most one due to indices uniqueness).
+		for i, c := range []byte(n.indices) {
+			if c == idxc {
+				if h, fp, found := walkLookup(n.children[i], rest, params); found {
+					return h, fp, true
 				}
-
-				// If there is a wildcard child, use it
-				if n.wildChild {
-					n = n.children[0]
-					switch n.nType {
-					case param:
-						// Find end of param (either '/' or end of path)
-						end := 0
-						for end < len(path) && path[end] != '/' {
-							end++
-						}
-
-						// Save param value
-						params[n.path[1:]] = path[:end]
-
-						// We need to go deeper!
-						if end < len(path) {
-							if len(n.children) > 0 {
-								path = path[end:]
-								// Use indices to find the correct child
-								idxc := path[0]
-								for i, c := range []byte(n.indices) {
-									if c == idxc {
-										n = n.children[i]
-										continue walk
-									}
-								}
-								// No matching child found
-								return nil, nil, ""
-							}
-
-							// ... but we can't
-							return nil, nil, ""
-						}
-
-						handlers = n.handlers
-						fullPath = n.fullPath
-						return
-
-					case catchAll:
-						// Save param value
-						params[n.path[2:]] = path
-
-						handlers = n.handlers
-						fullPath = n.fullPath
-						return
-
-					default:
-						panic("invalid node type")
-					}
-				}
-
-				// Nothing found
-				return nil, nil, ""
+				break
 			}
-		} else if path == prefix {
-			// We should have reached the node containing the handlers
-			if handlers = n.handlers; handlers != nil {
-				fullPath = n.fullPath
-				return
-			}
-
-			// No handlers registered for this path
-			return nil, nil, ""
 		}
 
-		// Nothing found
-		return nil, nil, ""
+		// 2. Fall back to the wildChild if present.
+		if n.wildChild != nil {
+			w := n.wildChild
+			switch w.nType {
+			case param:
+				end := 0
+				for end < len(rest) && rest[end] != '/' {
+					end++
+				}
+				paramName := w.path[1:]
+				prev, hadPrev := params[paramName]
+				params[paramName] = rest[:end]
+
+				if end == len(rest) {
+					if w.handlers != nil {
+						return w.handlers, w.fullPath, true
+					}
+					restoreParam(params, paramName, prev, hadPrev)
+					return nil, "", false
+				}
+				suffix := rest[end:]
+				idxc := suffix[0]
+				for i, c := range []byte(w.indices) {
+					if c == idxc {
+						if h, fp, found := walkLookup(w.children[i], suffix, params); found {
+							return h, fp, true
+						}
+						break
+					}
+				}
+				restoreParam(params, paramName, prev, hadPrev)
+				return nil, "", false
+
+			case catchAll:
+				params[w.path[1:]] = "/" + rest
+				return w.handlers, w.fullPath, true
+			}
+		}
+
+		return nil, "", false
+	}
+
+	if path == prefix {
+		if n.handlers != nil {
+			return n.handlers, n.fullPath, true
+		}
+		return nil, "", false
+	}
+
+	return nil, "", false
+}
+
+// restoreParam undoes a params[k] write so the caller can backtrack cleanly.
+func restoreParam(params map[string]string, k, prev string, hadPrev bool) {
+	if hadPrev {
+		params[k] = prev
+	} else {
+		delete(params, k)
 	}
 }
 
 // incrementChildPrio increments the priority of the child at the given index
+// and bubbles it forward in the children slice to keep hot routes near the front.
 func (n *Node) incrementChildPrio(pos int) int {
 	cs := n.children
 	cs[pos].priority++
 	prio := cs[pos].priority
 
-	// Adjust position (move to front)
 	newPos := pos
 	for ; newPos > 0 && cs[newPos-1].priority < prio; newPos-- {
-		// Swap node positions
 		cs[newPos-1], cs[newPos] = cs[newPos], cs[newPos-1]
 	}
 
-	// Build new index char string
 	if newPos != pos {
-		n.indices = n.indices[:newPos] + // Unchanged prefix
-			n.indices[pos:pos+1] + // The index char we move
-			n.indices[newPos:pos] + n.indices[pos+1:] // Rest without char at 'pos'
+		n.indices = n.indices[:newPos] +
+			n.indices[pos:pos+1] +
+			n.indices[newPos:pos] + n.indices[pos+1:]
 	}
 
 	return newPos
 }
 
-// Helper functions
-
-// longestCommonPrefix finds the longest common prefix
+// longestCommonPrefix returns the byte length of the common prefix of a and b.
 func longestCommonPrefix(a, b string) int {
 	i := 0
 	max := min(len(a), len(b))
@@ -355,16 +369,14 @@ func longestCommonPrefix(a, b string) int {
 	return i
 }
 
-// findWildcard finds a wildcard segment and checks its validity
+// findWildcard locates the first ':' or '*' wildcard segment in path.
+// Returns the wildcard token (including the leading byte), its start index,
+// and whether it is valid (no nested ':' or '*' inside the token).
 func findWildcard(path string) (wildcard string, i int, valid bool) {
-	// Find start
 	for start, c := range []byte(path) {
-		// A wildcard starts with ':' (param) or '*' (catch-all)
 		if c != ':' && c != '*' {
 			continue
 		}
-
-		// Find end and check for invalid characters
 		valid = true
 		for end, c := range []byte(path[start+1:]) {
 			switch c {
@@ -379,7 +391,7 @@ func findWildcard(path string) (wildcard string, i int, valid bool) {
 	return "", -1, false
 }
 
-// min returns the minimum of two integers
+// min returns the smaller of a and b.
 func min(a, b int) int {
 	if a < b {
 		return a
