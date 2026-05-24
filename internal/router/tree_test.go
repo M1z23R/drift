@@ -36,7 +36,7 @@ func mustMiss(t *testing.T, n *Node, path string) {
 	t.Helper()
 	handlers, _, _ := n.GetValue(path)
 	if handlers != nil {
-		t.Fatalf("GetValue(%q): got handler %v, want miss", path, handlers[0])
+		t.Fatalf("GetValue(%q): got handlers %v, want miss", path, handlers)
 	}
 }
 
@@ -84,7 +84,7 @@ func TestCatchAll(t *testing.T) {
 	mustGet(t, n, "/files/a/b/c", "files", map[string]string{"path": "/a/b/c"})
 }
 
-func TestSameNameParamContinuation(t *testing.T) {
+func TestParamWithLiteralContinuation(t *testing.T) {
 	n := NewNode()
 	n.AddRoute("/list/:id", []HandlerFunc{recordingHandler("byID")})
 	n.AddRoute("/list/:id/edit", []HandlerFunc{recordingHandler("edit")})
