@@ -118,3 +118,14 @@ func TestMixedLiteralAndParam_LiteralFirst(t *testing.T) {
 	mustGet(t, n, "/list/login", "login", nil)
 	mustGet(t, n, "/list/42", "byID", map[string]string{"id": "42"})
 }
+
+func TestBacktrackingOnPartialStaticMatch(t *testing.T) {
+	n := NewNode()
+	n.AddRoute("/list/special", []HandlerFunc{recordingHandler("special")})
+	n.AddRoute("/list/:id", []HandlerFunc{recordingHandler("byID")})
+
+	mustGet(t, n, "/list/special", "special", nil)
+	mustGet(t, n, "/list/somethingweird", "byID", map[string]string{"id": "somethingweird"})
+	mustGet(t, n, "/list/s", "byID", map[string]string{"id": "s"})
+	mustGet(t, n, "/list/42", "byID", map[string]string{"id": "42"})
+}
