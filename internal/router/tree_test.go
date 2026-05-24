@@ -109,3 +109,12 @@ func TestMixedLiteralAndParam_ParamFirst(t *testing.T) {
 	mustGet(t, n, "/list/login", "login", nil)
 	mustGet(t, n, "/list/42", "byID", map[string]string{"id": "42"})
 }
+
+func TestMixedLiteralAndParam_LiteralFirst(t *testing.T) {
+	n := NewNode()
+	n.AddRoute("/list/login", []HandlerFunc{recordingHandler("login")})
+	n.AddRoute("/list/:id", []HandlerFunc{recordingHandler("byID")})
+
+	mustGet(t, n, "/list/login", "login", nil)
+	mustGet(t, n, "/list/42", "byID", map[string]string{"id": "42"})
+}
