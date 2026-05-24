@@ -10,7 +10,7 @@ const (
 )
 
 // HandlerFunc is a function that handles HTTP requests
-type HandlerFunc interface{}
+type HandlerFunc any
 
 // Node represents a node in the radix tree.
 //
@@ -87,7 +87,6 @@ walk:
 				if n.wildChild != nil {
 					parentFullPathIndex += len(n.path)
 					existing := n.wildChild
-					existing.priority++
 
 					// Find end of incoming wildcard token.
 					end := 1
@@ -179,6 +178,9 @@ func (n *Node) insertChild(path, fullPath string, handlers []HandlerFunc) {
 			}
 
 			// Attach param as wildChild.
+			// Unreachable in practice: AddRoute only calls insertChild when n.wildChild is nil
+			// (empty-tree path, the n.wildChild == nil guard before the insertChild call, and
+			// freshly-created nodes). Kept as a defensive guard against future refactors.
 			if n.wildChild != nil {
 				panic("internal: wildChild already set on node for " + fullPath)
 			}
@@ -313,6 +315,8 @@ func walkLookup(n *Node, path string, params map[string]string) (handlers []Hand
 			case catchAll:
 				params[w.path[1:]] = "/" + rest
 				return w.handlers, w.fullPath, true
+			default:
+				panic("invalid node type in wildChild")
 			}
 		}
 
@@ -391,10 +395,3 @@ func findWildcard(path string) (wildcard string, i int, valid bool) {
 	return "", -1, false
 }
 
-// min returns the smaller of a and b.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
