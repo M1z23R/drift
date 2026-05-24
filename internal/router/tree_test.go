@@ -165,3 +165,29 @@ func TestDifferentNamedParamSiblingsPanic(t *testing.T) {
 		n.AddRoute("/list/:slug", []HandlerFunc{recordingHandler("bySlug")})
 	})
 }
+
+func TestCatchAllExclusivity(t *testing.T) {
+	t.Run("static_then_catchall_panics", func(t *testing.T) {
+		n := NewNode()
+		n.AddRoute("/files/special", []HandlerFunc{recordingHandler("special")})
+		mustPanic(t, "catch-all", func() {
+			n.AddRoute("/files/*path", []HandlerFunc{recordingHandler("files")})
+		})
+	})
+
+	t.Run("catchall_then_static_panics", func(t *testing.T) {
+		n := NewNode()
+		n.AddRoute("/files/*path", []HandlerFunc{recordingHandler("files")})
+		mustPanic(t, "catch-all", func() {
+			n.AddRoute("/files/special", []HandlerFunc{recordingHandler("special")})
+		})
+	})
+
+	t.Run("catchall_then_param_panics", func(t *testing.T) {
+		n := NewNode()
+		n.AddRoute("/files/*path", []HandlerFunc{recordingHandler("files")})
+		mustPanic(t, "catch-all", func() {
+			n.AddRoute("/files/:id", []HandlerFunc{recordingHandler("byID")})
+		})
+	})
+}

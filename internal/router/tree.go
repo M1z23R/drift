@@ -88,6 +88,15 @@ walk:
 					parentFullPathIndex += len(n.path)
 					existing := n.wildChild
 
+					// Catch-all is exclusive: either side being catch-all is a conflict.
+					// Surface this before the generic same-name comparison so the panic
+					// message names the actual cause.
+					if existing.nType == catchAll || idxc == '*' {
+						panic("catch-all conflicts with existing wildcard '" + existing.path +
+							"' at the same path slot: " + fullPath +
+							" vs " + existing.fullPath)
+					}
+
 					// Find end of incoming wildcard token.
 					end := 1
 					for end < len(path) && path[end] != '/' {
