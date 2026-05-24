@@ -156,3 +156,12 @@ func TestMixedDepthsAtSameSlot(t *testing.T) {
 	// No handler for `/list/42` alone — `:id` only has a continuation route.
 	mustMiss(t, n, "/list/42")
 }
+
+func TestDifferentNamedParamSiblingsPanic(t *testing.T) {
+	n := NewNode()
+	n.AddRoute("/list/:id", []HandlerFunc{recordingHandler("byID")})
+
+	mustPanic(t, ":slug", func() {
+		n.AddRoute("/list/:slug", []HandlerFunc{recordingHandler("bySlug")})
+	})
+}
