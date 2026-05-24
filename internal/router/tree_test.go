@@ -100,3 +100,12 @@ func TestDuplicateRegistrationPanics(t *testing.T) {
 		n.AddRoute("/list/login", []HandlerFunc{recordingHandler("b")})
 	})
 }
+
+func TestMixedLiteralAndParam_ParamFirst(t *testing.T) {
+	n := NewNode()
+	n.AddRoute("/list/:id", []HandlerFunc{recordingHandler("byID")})
+	n.AddRoute("/list/login", []HandlerFunc{recordingHandler("login")})
+
+	mustGet(t, n, "/list/login", "login", nil)
+	mustGet(t, n, "/list/42", "byID", map[string]string{"id": "42"})
+}
