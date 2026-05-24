@@ -129,3 +129,30 @@ func TestBacktrackingOnPartialStaticMatch(t *testing.T) {
 	mustGet(t, n, "/list/s", "byID", map[string]string{"id": "s"})
 	mustGet(t, n, "/list/42", "byID", map[string]string{"id": "42"})
 }
+
+func TestDeeperNesting(t *testing.T) {
+	n := NewNode()
+	n.AddRoute("/list/:id/items", []HandlerFunc{recordingHandler("paramItems")})
+	n.AddRoute("/list/special/items", []HandlerFunc{recordingHandler("specialItems")})
+
+	mustGet(t, n, "/list/special/items", "specialItems", nil)
+	mustGet(t, n, "/list/42/items", "paramItems", map[string]string{"id": "42"})
+	mustGet(t, n, "/list/somethingweird/items", "paramItems", map[string]string{"id": "somethingweird"})
+}
+
+func TestMixedDepthsAtSameSlot(t *testing.T) {
+	n := NewNode()
+	n.AddRoute("/list/special", []HandlerFunc{recordingHandler("special")})
+	n.AddRoute("/list/:id/sub", []HandlerFunc{recordingHandler("paramSub")})
+
+	mustGet(t, n, "/list/special", "special", nil)
+	mustGet(t, n, "/list/42/sub", "paramSub", map[string]string{"id": "42"})
+
+	// `/list/special/sub`: static branch is taken first (indices match `s`),
+	// but `special` is a leaf with no `/sub` child — lookup backtracks to
+	// `:id` which matches with id=special.
+	mustGet(t, n, "/list/special/sub", "paramSub", map[string]string{"id": "special"})
+
+	// No handler for `/list/42` alone — `:id` only has a continuation route.
+	mustMiss(t, n, "/list/42")
+}
