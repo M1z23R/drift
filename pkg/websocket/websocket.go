@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/m1z23r/drift/pkg/drift"
@@ -35,16 +36,17 @@ const (
 
 // Conn represents a WebSocket connection
 type Conn struct {
-	conn       net.Conn
-	reader     *bufio.Reader
-	writer     *bufio.Writer
-	writeMu    sync.Mutex
-	readMu     sync.Mutex
-	closed     bool
-	closeMu    sync.Mutex
-	readLimit  int64
-	closeCode  int
-	closeText  string
+	conn        net.Conn
+	reader      *bufio.Reader
+	writer      *bufio.Writer
+	writeMu     sync.Mutex
+	readMu      sync.Mutex
+	closed      bool
+	closeMu     sync.Mutex
+	readLimit   int64
+	closeCode   int
+	closeText   string
+	pongHandler atomic.Pointer[func([]byte)]
 
 	// For fragmented messages
 	fragmentBuffer []byte
@@ -202,7 +204,9 @@ func (c *Conn) ReadMessage() (MessageType, []byte, error) {
 			continue
 
 		case OpPong:
-			// Pong received, continue reading
+			if h := c.pongHandler.Load(); h != nil {
+				(*h)(frame.payload)
+			}
 			continue
 		}
 
@@ -283,6 +287,13 @@ func (c *Conn) ReadJSON(v any) error {
 		return err
 	}
 	return jsonUnmarshal(data, v)
+}
+
+// SetPongHandler sets the handler called with the payload of every pong frame
+// received by ReadMessage. It may be called concurrently with ReadMessage,
+// including while a read is blocked.
+func (c *Conn) SetPongHandler(h func(data []byte)) {
+	c.pongHandler.Store(&h)
 }
 
 // Ping sends a ping message
