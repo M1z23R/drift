@@ -17,6 +17,12 @@ const (
 	ReleaseMode Mode = "release"
 )
 
+// RouteInfo describes a single registered route
+type RouteInfo struct {
+	Method string
+	Path   string
+}
+
 // Engine is the main framework instance
 type Engine struct {
 	RouterGroup
@@ -24,6 +30,7 @@ type Engine struct {
 	trees           map[string]*router.Node // method -> radix tree
 	mode            Mode
 	noRouteHandlers []HandlerFunc
+	routes          []RouteInfo
 }
 
 // New creates a new Engine instance in debug mode
@@ -84,6 +91,7 @@ func (engine *Engine) addRoute(method, path string, handlers []HandlerFunc) {
 		routerHandlers[i] = h
 	}
 	root.AddRoute(path, routerHandlers)
+	engine.routes = append(engine.routes, RouteInfo{Method: method, Path: path})
 
 	// Log route registration in debug mode
 	if engine.IsDebug() {
@@ -174,6 +182,13 @@ func (engine *Engine) Run(addr string) error {
 // RunTLS starts the HTTPS server
 func (engine *Engine) RunTLS(addr, certFile, keyFile string) error {
 	return http.ListenAndServeTLS(addr, certFile, keyFile, engine)
+}
+
+// Routes returns a copy of all registered routes in registration order
+func (engine *Engine) Routes() []RouteInfo {
+	routes := make([]RouteInfo, len(engine.routes))
+	copy(routes, engine.routes)
+	return routes
 }
 
 // NoRoute registers handlers for when no route is matched
