@@ -5,7 +5,7 @@ description: Use when writing or modifying Go code that imports github.com/m1z23
 
 # Drift Framework
 
-> **Built for drift `v1.1.0`** (module `github.com/m1z23r/drift`, Go 1.25.2). Verify the target's version with `go list -m github.com/m1z23r/drift` (or `git describe --tags` inside the repo). If it differs, re-check this skill against the source before trusting the routing/panic details below.
+> **Built for drift `v1.2.0`** (module `github.com/m1z23r/drift`, Go 1.25.2). Verify the target's version with `go list -m github.com/m1z23r/drift` (or `git describe --tags` inside the repo). If it differs, re-check this skill against the source before trusting the routing/panic details below.
 
 Lightweight Go web framework (Gin-style API, zero third-party runtime deps, Go 1.25+). Public packages: `pkg/drift`, `pkg/middleware`, `pkg/websocket`. Routing is a radix tree **per HTTP method**.
 
@@ -78,7 +78,9 @@ app.Get("/ws", middleware.SkipCompression(), func(c *drift.Context) {
 })
 ```
 
-Conn API: `ReadMessage` / `WriteMessage`, `WriteText` / `WriteBinary`, `ReadJSON` / `WriteJSON`, `Ping`, `SetReadLimit`, `SetReadDeadline` / `SetWriteDeadline`, `RemoteAddr` / `LocalAddr`, `Close(code, reason)`, `CloseCode()` / `CloseText()` (after disconnect). Message types: `TextMessage`, `BinaryMessage`. Standard close codes are exported as `websocket.CloseNormalClosure`, `CloseGoingAway`, `CloseProtocolError`, `CloseAbnormalClosure`, `ClosePolicyViolation`, `CloseMessageTooBig`, `CloseInternalServerErr`, etc.
+Conn API: `ReadMessage` / `WriteMessage`, `WriteText` / `WriteBinary`, `ReadJSON` / `WriteJSON`, `Ping`, `SetPongHandler(func(data []byte))`, `SetReadLimit`, `SetReadDeadline` / `SetWriteDeadline`, `RemoteAddr` / `LocalAddr`, `Close(code, reason)`, `CloseCode()` / `CloseText()` (after disconnect). Message types: `TextMessage`, `BinaryMessage`. Standard close codes are exported as `websocket.CloseNormalClosure`, `CloseGoingAway`, `CloseProtocolError`, `CloseAbnormalClosure`, `ClosePolicyViolation`, `CloseMessageTooBig`, `CloseInternalServerErr`, etc.
+
+`SetPongHandler` registers a callback invoked by `ReadMessage` whenever a pong frame arrives; without it pongs are swallowed silently. It's safe to call from another goroutine while `ReadMessage` is blocked - use it to refresh a read deadline from the client's pong replies.
 
 Custom upgrader for non-default buffer sizes, read limits, `CheckOrigin`, or `Subprotocols`:
 
@@ -93,6 +95,7 @@ conn, err := upgrader.Upgrade(c)
 app.SetMode(drift.DebugMode)    // default; logs routes, requests, startup
 app.SetMode(drift.ReleaseMode)  // silent; use in production
 app.IsDebug()
+app.Routes()                    // []RouteInfo{Method, Path} for every registered route, registration order, copy semantics
 ```
 
 ## Project layout (importable boundary)

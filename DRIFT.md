@@ -191,6 +191,7 @@ drift.NewHTTPError(503, "DB down")     // reusable HTTPError
 app.SetMode(drift.DebugMode)    // default: logs routes + requests
 app.SetMode(drift.ReleaseMode)  // silent
 app.IsDebug()
+app.Routes()                    // []RouteInfo{Method, Path} for every registered route, in registration order
 ```
 
 Debug mode logs route registration, request method/path/status/duration, and startup info. Release mode disables all framework logs.
@@ -241,6 +242,7 @@ conn.SetReadDeadline(t) / SetWriteDeadline(t)
 conn.RemoteAddr() / LocalAddr()
 conn.Close(code, reason)
 conn.CloseCode() / CloseText()        // after disconnect
+conn.SetPongHandler(func(data []byte)) // called from ReadMessage when a pong arrives; otherwise pongs are swallowed silently, so this is the way to refresh a read deadline from the client's pong replies
 ```
 
 ### Custom upgrader

@@ -185,6 +185,18 @@ admin.Get("/dashboard", dashboardHandler)
 admin.Get("/users", listUsersHandler)
 ```
 
+## Listing Routes
+
+Inspect every route registered on the engine, including ones added through groups, in registration order:
+
+```go
+for _, r := range app.Routes() {
+    fmt.Println(r.Method, r.Path)
+}
+```
+
+`app.Routes()` returns a copy, so mutating the returned slice does not affect the engine.
+
 ## Built-in Middleware
 
 ### CORS
@@ -593,6 +605,13 @@ conn.ReadJSON(&msg)
 
 // Control frames
 conn.Ping([]byte("ping"))
+
+// Pong handler - called from ReadMessage whenever a pong frame arrives
+// (pongs are otherwise swallowed silently); use it to refresh a read
+// deadline from the client's pong replies
+conn.SetPongHandler(func(data []byte) {
+    conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+})
 
 // Close connection with code and reason
 conn.Close(websocket.CloseNormalClosure, "goodbye")
